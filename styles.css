@@ -246,6 +246,63 @@ input, select {
   color: var(--ink);
 }
 .footnote { margin-top: 1.4rem; font-size: 0.98rem; }
+
+.draw-section {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.7rem;
+  margin: 0.2rem 0 1.2rem;
+}
+
+.draw-section h2 { font-size: 1.45rem; }
+
+.draw-live { color: var(--muted); }
+
+canvas.draw-pad {
+  display: block;
+  width: 100%;
+  height: 320px;
+  background: var(--paper);
+  border: 1px solid var(--ink);
+  border-radius: 8px;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.pen-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+button.swatch {
+  width: 2.5rem;
+  height: 2.5rem;
+  min-height: 2.5rem;
+  padding: 0;
+  border-radius: 999px;
+  border: 2px solid var(--ink);
+}
+
+button.pen-size {
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 2.5rem;
+}
+
+button.is-on,
+button.swatch.is-on,
+button.pen-size.is-on {
+  outline: 3px solid var(--blue);
+  outline-offset: 2px;
+}
+
+button.pen-size.is-on {
+  background: var(--ink);
+  color: var(--paper);
+}
 .lock-wrap { max-width: 26rem; margin-top: 1.4rem; }
 
 @media (max-width: 980px) {
@@ -306,6 +363,7 @@ button.phone-back:hover:not(:disabled) {
 }
 
 @media (max-width: 700px) {
+  canvas.draw-pad { height: 58vh; min-height: 280px; }
   .note-actions,
   .form-row { gap: 0.65rem; }
   .note-actions button,

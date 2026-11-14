@@ -1,7 +1,11 @@
-import { cleanCall, cleanPerson, validateBoard } from "./board.mjs";
+import { cleanCall, cleanPerson, cleanStroke, validateBoard } from "./board.mjs";
 import { freshSeed, PUBLIC_BOARD_URL } from "./seed.mjs";
 import {
   DAYS,
+  MAX_POINTS,
+  MAX_STROKES,
+  STROKE_COLORS,
+  STROKE_WIDTHS,
   ZONES,
   apartLabel,
   blockWhen,
@@ -13,9 +17,14 @@ import {
 } from "./view.mjs";
 
 const CODE_KEY = "side-by-side-code";
+const DRAW_POLL_MS = 3000;
+const COLOR_LABELS = ["Ink", "Green", "Clay", "Blue"];
+const WIDTH_LABELS = ["Thin", "Medium", "Thick"];
 const live = [];
+const inflight = new Set();
 let saveChain = Promise.resolve();
 let transport = "pending";
+let syncTimer = 0;
 
 const state = {
   mode: "local",
@@ -27,6 +36,11 @@ const state = {
   panel: null,
   focusId: "",
   phone: null,
+  penColor: STROKE_COLORS[0],
+  penWidth: STROKE_WIDTHS[1],
+  active: null,
+  pointerId: null,
+  clearing: false,
 };
 
 let focusPhoneBack = false;
@@ -163,10 +177,13 @@ function render() {
   else {
     const banner = statusBanner();
     if (banner) app.append(banner);
-    app.append(clocks(), actions(), wall());
+    app.append(clocks(), actions());
+    if (state.panel === "draw") app.append(drawSection());
+    app.append(wall());
   }
-  app.append(el("p", { class: "footnote" }, "Each note keeps its own time zone. A pinned call stays up until you take it down."));
+  app.append(el("p", { class: "footnote" }, "Each note keeps its own time zone. A pinned call stays up until you take it down. A drawing stays until someone clears it."));
   paintLive();
+  if (document.getElementById("draw-pad")) requestAnimationFrame(resizeCanvas);
   const backWanted = focusPhoneBack;
   focusPhoneBack = false;
   if (state.focusId) {
@@ -204,7 +221,32 @@ function clocks() {
 
 function actions() {
   const off = state.mode === "preview";
-  return el("div", { class: "actions" }, el("button", { type: "button", disabled: off, onClick: () => openPanel("call") }, "Plan a call"));
+  return el(
+    "div",
+    { class: "actions" },
+    el("button", { type: "button", disabled: off, onClick: () => openPanel("call") }, "Plan a call"),
+    el(
+      "button",
+      {
+        type: "button",
+        disabled: off,
+        class: state.panel === "draw" ? "is-on" : "",
+        onClick: openDraw,
+      },
+      "Draw"
+    )
+  );
+}
+
+function openDraw() {
+  if (state.mode === "preview") return;
+  state.editing = null;
+  state.draft = null;
+  state.panel = state.panel === "draw" ? null : "draw";
+  state.active = null;
+  state.pointerId = null;
+  render();
+  void pullBoard();
 }
 
 function openPanel(panel) {
@@ -216,7 +258,8 @@ function openPanel(panel) {
 }
 
 function activePhoneScreen() {
-  if (state.phone === "home" || state.phone === "calls") return state.phone;
+  if (state.phone === "home" || state.phone === "calls" || state.phone === "draw") return state.phone;
+  if (state.panel === "draw") return "draw";
   if (state.phone && personById(state.phone)) return state.phone;
   if (state.panel === "call") return "calls";
   if (state.editing && personById(state.editing)) return state.editing;
@@ -225,7 +268,11 @@ function activePhoneScreen() {
 
 function showPhoneHome() {
   state.phone = "home";
+  if (state.panel === "draw") state.panel = null;
+  state.active = null;
+  state.pointerId = null;
   render();
+  void pullBoard();
 }
 
 function showPhonePerson(id) {
@@ -237,8 +284,23 @@ function showPhonePerson(id) {
 function showPhoneCalls() {
   state.phone = "calls";
   if (state.mode !== "preview") state.panel = "call";
+  state.active = null;
+  state.pointerId = null;
   focusPhoneBack = true;
   render();
+  void pullBoard();
+}
+
+function showPhoneDraw() {
+  state.phone = "draw";
+  state.panel = "draw";
+  state.editing = null;
+  state.draft = null;
+  state.active = null;
+  state.pointerId = null;
+  focusPhoneBack = true;
+  render();
+  void pullBoard();
 }
 
 function phoneChoice(label, onClick, screen) {
@@ -254,7 +316,8 @@ function phoneHome() {
     { class: "phone-home", "aria-label": "Choose what to open" },
     phoneChoice(left.name, () => showPhonePerson(left.id), left.id),
     phoneChoice(right.name, () => showPhonePerson(right.id), right.id),
-    phoneChoice("Plan a call", showPhoneCalls, "calls")
+    phoneChoice("Plan a call", showPhoneCalls, "calls"),
+    phoneChoice("Draw", showPhoneDraw, "draw")
   );
 }
 
@@ -270,7 +333,18 @@ function phoneBody() {
   const screen = activePhoneScreen();
   if (screen === "home") return el("div", { class: "phone-stack" }, phoneHome(), statusBanner(), clocks());
   if (screen === "calls") return phoneCalls();
+  if (screen === "draw") return phoneDraw();
   return phonePerson(personById(screen));
+}
+
+function phoneDraw() {
+  return el(
+    "div",
+    { class: "phone-screen", dataset: { screen: "draw" } },
+    phoneBack(),
+    statusBanner(),
+    drawSection()
+  );
 }
 
 function phonePerson(person) {
@@ -299,6 +373,255 @@ function phoneCalls() {
 function wall() {
   const [left, right] = state.board.people;
   return el("div", { class: "wall" }, personColumn(left), center(), personColumn(right));
+}
+
+function drawVisible() {
+  return state.panel === "draw" || (isPhone() && activePhoneScreen() === "draw");
+}
+
+function drawSection() {
+  const off = state.mode === "preview";
+  const canvas = el("canvas", {
+    id: "draw-pad",
+    class: "draw-pad",
+    width: "2",
+    height: "2",
+  });
+  canvas.addEventListener("pointerdown", onPointerDown);
+  canvas.addEventListener("pointermove", onPointerMove);
+  canvas.addEventListener("pointerup", onPointerUp);
+  canvas.addEventListener("pointercancel", onPointerUp);
+  const colors = STROKE_COLORS.map((color, index) =>
+    el(
+      "button",
+      {
+        type: "button",
+        class: "swatch" + (color === state.penColor ? " is-on" : ""),
+        style: "background:" + color,
+        "aria-label": COLOR_LABELS[index] || "Color",
+        "aria-pressed": color === state.penColor ? "true" : "false",
+        disabled: off,
+        onClick: () => {
+          state.penColor = color;
+          markPen();
+        },
+      }
+    )
+  );
+  const widths = STROKE_WIDTHS.map((width, index) =>
+    el(
+      "button",
+      {
+        type: "button",
+        class: "pen-size" + (width === state.penWidth ? " is-on" : ""),
+        "aria-pressed": width === state.penWidth ? "true" : "false",
+        disabled: off,
+        onClick: () => {
+          state.penWidth = width;
+          markPen();
+        },
+      },
+      WIDTH_LABELS[index] || String(width)
+    )
+  );
+  return el(
+    "section",
+    { class: "draw-section", dataset: { screen: "draw" } },
+    el("h2", {}, "Drawing"),
+    el("p", { class: "draw-live" }, "Live for both of you."),
+    canvas,
+    el("div", { class: "pen-row" }, ...colors, ...widths),
+    el(
+      "button",
+      {
+        type: "button",
+        class: "text-btn",
+        dataset: { action: "clear-draw" },
+        disabled: off || state.clearing || !(state.board.strokes || []).length,
+        onClick: clearDrawing,
+      },
+      "Clear"
+    )
+  );
+}
+
+function markPen() {
+  const pad = document.getElementById("draw-pad");
+  if (!pad) {
+    render();
+    return;
+  }
+  const row = pad.parentElement && pad.parentElement.querySelector(".pen-row");
+  if (!row) return;
+  const buttons = [...row.querySelectorAll("button")];
+  buttons.forEach((button, index) => {
+    const on = index < STROKE_COLORS.length
+      ? STROKE_COLORS[index] === state.penColor
+      : STROKE_WIDTHS[index - STROKE_COLORS.length] === state.penWidth;
+    button.classList.toggle("is-on", on);
+    button.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+}
+
+function canvasBox(canvas) {
+  const rect = canvas.getBoundingClientRect();
+  return { w: Math.max(rect.width, 1), h: Math.max(rect.height, 1) };
+}
+
+function resizeCanvas() {
+  const canvas = document.getElementById("draw-pad");
+  if (!canvas) return;
+  const box = canvasBox(canvas);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.max(1, Math.round(box.w * dpr));
+  const h = Math.max(1, Math.round(box.h * dpr));
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w;
+    canvas.height = h;
+  }
+  paintStrokes();
+}
+
+function pointFromEvent(event, canvas) {
+  const rect = canvas.getBoundingClientRect();
+  const x = rect.width ? (event.clientX - rect.left) / rect.width : 0;
+  const y = rect.height ? (event.clientY - rect.top) / rect.height : 0;
+  return [
+    Math.min(1, Math.max(0, Math.round(x * 10000) / 10000)),
+    Math.min(1, Math.max(0, Math.round(y * 10000) / 10000)),
+  ];
+}
+
+function onPointerDown(event) {
+  if (state.mode === "preview" || state.clearing || !state.board || state.active) return;
+  const canvas = event.currentTarget;
+  canvas.setPointerCapture(event.pointerId);
+  state.pointerId = event.pointerId;
+  state.active = {
+    id: newId(),
+    color: state.penColor,
+    width: state.penWidth,
+    points: [pointFromEvent(event, canvas)],
+  };
+  paintStrokes();
+  event.preventDefault();
+}
+
+function onPointerMove(event) {
+  const stroke = state.active;
+  if (!stroke || event.pointerId !== state.pointerId) return;
+  if (stroke.points.length >= MAX_POINTS) return;
+  const canvas = event.currentTarget;
+  const next = pointFromEvent(event, canvas);
+  const last = stroke.points[stroke.points.length - 1];
+  if (Math.hypot(next[0] - last[0], next[1] - last[1]) < 0.004) return;
+  stroke.points.push(next);
+  paintStrokes();
+  event.preventDefault();
+}
+
+function onPointerUp(event) {
+  const stroke = state.active;
+  if (!stroke || event.pointerId !== state.pointerId) return;
+  state.active = null;
+  state.pointerId = null;
+  if (event.currentTarget.hasPointerCapture && event.currentTarget.hasPointerCapture(event.pointerId)) {
+    event.currentTarget.releasePointerCapture(event.pointerId);
+  }
+  commitStroke(stroke);
+}
+
+function drawStroke(ctx, stroke, w, h, scale) {
+  if (!stroke || !STROKE_COLORS.includes(stroke.color) || !STROKE_WIDTHS.includes(stroke.width)) return;
+  if (!Array.isArray(stroke.points) || !stroke.points.length) return;
+  const first = stroke.points[0];
+  ctx.beginPath();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = stroke.color;
+  ctx.fillStyle = stroke.color;
+  ctx.lineWidth = stroke.width * scale;
+  if (stroke.points.length === 1) {
+    ctx.arc(first[0] * w, first[1] * h, (stroke.width * scale) / 2, 0, Math.PI * 2);
+    ctx.fill();
+    return;
+  }
+  ctx.moveTo(first[0] * w, first[1] * h);
+  for (let i = 1; i < stroke.points.length; i += 1) {
+    const point = stroke.points[i];
+    ctx.lineTo(point[0] * w, point[1] * h);
+  }
+  ctx.stroke();
+}
+
+function paintStrokes() {
+  const canvas = document.getElementById("draw-pad");
+  if (!canvas || !state.board) return;
+  const ctx = canvas.getContext("2d");
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#f8fbf9";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  const strokes = [...(state.board.strokes || [])];
+  if (state.active) strokes.push(state.active);
+  for (const stroke of strokes) drawStroke(ctx, stroke, canvas.width, canvas.height, dpr);
+}
+
+function mergeStrokes(remote) {
+  const list = Array.isArray(remote) ? remote : [];
+  const seen = new Set(list.map((stroke) => stroke.id));
+  const pending = (state.board.strokes || []).filter((stroke) => inflight.has(stroke.id) && !seen.has(stroke.id));
+  return list.concat(pending);
+}
+
+function syncClearButton() {
+  const button = document.querySelector("[data-action='clear-draw']");
+  if (!button) return;
+  const count = state.board && Array.isArray(state.board.strokes) ? state.board.strokes.length : 0;
+  button.disabled = state.mode === "preview" || state.clearing || !count;
+}
+
+function commitStroke(stroke) {
+  if (!stroke || !stroke.points.length || !state.board) return;
+  inflight.add(stroke.id);
+  state.board.strokes = (state.board.strokes || []).concat(stroke);
+  paintStrokes();
+  syncClearButton();
+  persistStroke(stroke)
+    .then((saved) => {
+      inflight.delete(stroke.id);
+      if (!saved || !saved.board || !state.board) return;
+      state.board = saved.board;
+      state.board.strokes = mergeStrokes(saved.board.strokes);
+      paintStrokes();
+      syncClearButton();
+    })
+    .catch((err) => {
+      inflight.delete(stroke.id);
+      if (state.board) state.board.strokes = (state.board.strokes || []).filter((item) => item.id !== stroke.id);
+      paintStrokes();
+      syncClearButton();
+      if (!err.locked) flash(err.message || "Could not save.");
+    });
+}
+
+async function clearDrawing() {
+  if (state.clearing || state.mode === "preview" || !state.board) return;
+  state.clearing = true;
+  state.active = null;
+  syncClearButton();
+  try {
+    const saved = await persistClear();
+    state.board = saved.board;
+    state.board.strokes = [];
+    paintStrokes();
+    flash("Drawing cleared.");
+  } catch (err) {
+    if (!err.locked) flash(err.message || "Could not save.");
+  } finally {
+    state.clearing = false;
+    syncClearButton();
+  }
 }
 
 function personColumn(person) {
@@ -800,6 +1123,32 @@ async function persistCall(input) {
   );
 }
 
+function withStroke(board, stroke) {
+  const strokes = Array.isArray(board.strokes) ? board.strokes.slice() : [];
+  if (strokes.some((item) => item.id === stroke.id)) return board;
+  if (strokes.length >= MAX_STROKES) strokes.shift();
+  board.strokes = strokes.concat(stroke);
+  return board;
+}
+
+async function persistStroke(stroke) {
+  const cleaned = cleanStroke(stroke);
+  if (transport === "server") {
+    return enqueueSave(() => api("/api/strokes", { method: "POST", body: cleaned }));
+  }
+  return enqueueSave(() => changeShared((board) => withStroke(board, cleaned)));
+}
+
+async function persistClear() {
+  if (transport === "server") return enqueueSave(() => api("/api/strokes", { method: "DELETE" }));
+  return enqueueSave(() =>
+    changeShared((board) => {
+      board.strokes = [];
+      return board;
+    })
+  );
+}
+
 async function persistRemoveCall(id) {
   if (transport === "server") return api("/api/calls/" + id, { method: "DELETE" });
   return enqueueSave(() =>
@@ -848,22 +1197,47 @@ load().catch((err) => {
   if (app && !state.board) app.textContent = "The wall didn’t open.";
 });
 
+window.addEventListener("resize", () => {
+  if (document.getElementById("draw-pad")) resizeCanvas();
+});
+
 setInterval(() => {
-  if (!state.editing && !state.panel) paintLive();
+  if (!state.editing && state.panel !== "call") paintLive();
 }, 30000);
 
+function armSync() {
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(pullBoard, drawVisible() ? DRAW_POLL_MS : 15000);
+}
 
-setInterval(async () => {
-  if (transport === "pending" || transport === "memory") return;
-  if (state.locked || state.editing || state.panel || !state.board) return;
+let pulling = false;
+
+async function pullBoard() {
+  if (pulling) return;
+  pulling = true;
+  clearTimeout(syncTimer);
   try {
+    if (transport === "pending" || transport === "memory") return;
+    if (state.locked || state.editing || state.active || state.clearing || !state.board) return;
+    if (state.panel && state.panel !== "draw") return;
     const data = await readWall();
-    if (JSON.stringify(data.board) !== JSON.stringify(state.board)) {
-      state.board = data.board;
-      state.mode = data.mode;
-      render();
+    data.board.strokes = mergeStrokes(data.board.strokes);
+    const same = JSON.stringify(data.board) === JSON.stringify(state.board);
+    state.board = data.board;
+    state.mode = data.mode;
+    if (same) return;
+    if (drawVisible() && document.getElementById("draw-pad")) {
+      paintStrokes();
+      syncClearButton();
+      return;
     }
+    render();
   } catch {
     // Keep the wall that’s already on screen.
+  } finally {
+    pulling = false;
+    armSync();
   }
-}, 15000);
+}
+
+armSync();

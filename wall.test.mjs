@@ -251,16 +251,21 @@ test("a narrow phone offers one screen at a time and the wide layout still has b
     assert.match(client.text, /phone-choice/);
     assert.match(client.text, /class: "phone-back"/);
     assert.match(client.text, /"Back"/);
-    assert.match(client.text, /actions\(\), wall\(\)/);
+    assert.match(client.text, /actions\(\)/);
+    assert.match(client.text, /if \(state\.panel === "draw"\) app\.append\(drawSection\(\)\)/);
+    assert.match(client.text, /app\.append\(wall\(\)\)/);
     assert.match(client.text, /left\.name/);
     assert.match(client.text, /right\.name/);
     assert.match(client.text, /"Plan a call"/);
+    assert.match(client.text, /phoneChoice\("Draw", showPhoneDraw, "draw"\)/);
+    assert.match(client.text, /"Draw"/);
+    assert.match(client.text, /draw-pad/);
     assert.doesNotMatch(client.text, /"Her"/);
     assert.doesNotMatch(client.text, /"You"/);
     assert.match(css.text, /button\.phone-choice/);
     assert.match(css.text, /min-height:\s*4\.25rem/);
-    assert.doesNotMatch(client.text, /Clear drawing/);
-    assert.doesNotMatch(client.text, /toggleDraw|pen-tray|wall-draw|paintStrokes/);
+    assert.match(css.text, /canvas\.draw-pad/);
+    assert.doesNotMatch(client.text, /toggleDraw|pen-tray|wall-draw/);
   } finally {
     await app.close();
   }
@@ -345,10 +350,13 @@ test("a stroke is saved, a bad stroke is rejected, and clear removes the drawing
     assert.equal(font.status, 200);
     const client = await send(app.url, "/app.js");
     assert.match(client.text, /Plan a call/);
-    assert.doesNotMatch(client.text, /Clear drawing/);
-    assert.doesNotMatch(client.text, /toggleDraw|pen-tray|wall-draw|paintStrokes|\/api\/strokes/);
-    assert.doesNotMatch(page.text, /wall-draw|Clear drawing|drawing you both/);
+    assert.match(client.text, /"Draw"/);
+    assert.match(client.text, /id: "draw-pad"/);
+    assert.match(client.text, /DRAW_POLL_MS/);
+    assert.doesNotMatch(client.text, /toggleDraw|pen-tray|wall-draw/);
+    assert.doesNotMatch(page.text, /wall-draw/);
     assert.doesNotMatch(css.text, /\.draw-layer|pen-tray|is-drawing/);
+    assert.match(css.text, /canvas\.draw-pad/);
     assert.match(client.text, /documentReadUrl/);
     assert.match(client.text, /freshSeed/);
     const seedFile = await send(app.url, "/seed.mjs");
