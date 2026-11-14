@@ -1,4 +1,4 @@
-export const PUBLIC_BOARD_URL = "https://crudcrud.com/api/b74676d9d1af402e9063e02b2c780a22/wall/6af833171de23403e8bfc94b";
+export const PUBLIC_BOARD_URL = "https://api.npoint.io/9368c24b508a2bf76c66";
 
 const SEED = {
   "people": [

@@ -47,6 +47,23 @@ button { cursor: pointer; }
 :focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
 ::selection { background: #b7d4ea; }
 
+.draw-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  background: transparent;
+}
+
+body.is-drawing { overscroll-behavior: none; }
+body.is-drawing .draw-layer {
+  pointer-events: auto;
+  cursor: crosshair;
+  touch-action: none;
+}
+
 .page {
   position: relative;
   z-index: 1;
@@ -54,6 +71,11 @@ button { cursor: pointer; }
   margin: 0 auto;
   padding: 1.4rem 1rem 3rem;
   background: transparent;
+}
+
+body.is-drawing .page { pointer-events: none; }
+body.is-drawing .page :is(.mast, .clocks, .banner, .actions, .note, .footnote, .notice, .lock-wrap) {
+  pointer-events: auto;
 }
 
 .eyebrow {
@@ -123,9 +145,59 @@ button, .text-btn {
   color: var(--ink);
 }
 
+button.is-on {
+  background: var(--green);
+  border-color: var(--green);
+  color: var(--paper);
+}
+
 button:disabled { opacity: 0.4; cursor: not-allowed; }
 button:hover:not(:disabled) { background: #24362f; }
-.text-btn:hover:not(:disabled) { background: rgba(20, 33, 28, 0.08); }
+.text-btn:hover:not(:disabled),
+button.pen-width:hover:not(:disabled) { background: rgba(20, 33, 28, 0.08); }
+button.is-on:hover:not(:disabled),
+button.pen-width.is-on:hover:not(:disabled) { background: #0c5b47; }
+
+.pen-tray {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  padding-top: 0.15rem;
+}
+
+.pen-tray[hidden] { display: none; }
+
+.pen-hint {
+  color: var(--muted);
+  font-size: 0.98rem;
+}
+
+button.swatch {
+  width: 1.8rem;
+  height: 1.8rem;
+  padding: 0;
+  border: 2px solid var(--ink);
+  border-radius: 4px;
+  background: var(--ink);
+}
+
+button.swatch.is-on { outline: 3px solid var(--ink); outline-offset: 2px; }
+button.swatch[data-color="#14211c"] { background: #14211c; }
+button.swatch[data-color="#0f6e56"] { background: #0f6e56; }
+button.swatch[data-color="#b4532a"] { background: #b4532a; }
+button.swatch[data-color="#1d4e89"] { background: #1d4e89; }
+
+button.pen-width {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+button.pen-width.is-on {
+  background: var(--ink);
+  color: var(--paper);
+}
 
 .wall {
   display: grid;
@@ -263,6 +335,6 @@ input, select {
 
 @media print {
   body { background: white; }
-  .actions, .note-actions, .text-btn { display: none; }
+  .actions, .note-actions, .text-btn, .draw-layer { display: none; }
   .note { break-inside: avoid; }
 }

@@ -191,7 +191,7 @@ export function createServer(options = {}) {
       "referrer-policy": "no-referrer",
       "cache-control": "no-cache",
       "content-security-policy":
-        "default-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; script-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+        "default-src 'self'; style-src 'self'; font-src 'self'; img-src 'self'; script-src 'self'; connect-src 'self' https://api.npoint.io; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
     });
     if (req.method === "HEAD") {
       res.end();
