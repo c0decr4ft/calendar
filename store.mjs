@@ -60,7 +60,7 @@ const SEED = {
     },
     {
       id: "right",
-      name: "You",
+      name: "Luca",
       timezone: "",
       days: [
         {

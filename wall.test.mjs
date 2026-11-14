@@ -23,9 +23,9 @@ test("her week knows what overlaps, what is optional, and what is free", () => {
   assert.equal(dayStatus(day("wednesday"), 16 * 60).title, "Nothing on");
 });
 
-test("his week is school and basketball, and the note is still named You", () => {
+test("his week is school and basketball, and the note is named Luca", () => {
   const person = freshSeed().people.find((item) => item.id === "right");
-  assert.equal(person.name, "You");
+  assert.equal(person.name, "Luca");
   assert.equal(person.timezone, "");
   const blocks = Object.fromEntries(person.days.map((item) => [item.id, item.blocks]));
   assert.deepEqual(
@@ -74,9 +74,9 @@ test("ireland and italy stay an hour apart, including summer time", () => {
   assert.equal(zonedTimeToUtc("2026-06-15", "20:00", "Europe/Dublin").toISOString(), "2026-06-15T19:00:00.000Z");
   const people = [
     { name: "Teegan", timezone: "Europe/Dublin" },
-    { name: "You", timezone: "Europe/Rome" },
+    { name: "Luca", timezone: "Europe/Rome" },
   ];
-  assert.equal(apartLabel(winter, people[0], people[1]), "You · 1 hr ahead");
+  assert.equal(apartLabel(winter, people[0], people[1]), "Luca · 1 hr ahead");
   assert.equal(visitLine(18), "In 18 days");
   assert.equal(visitLine(0), "Today");
   assert.equal(visitLine(-1), "That day has passed");
@@ -118,7 +118,7 @@ test("a local wall saves one note, a call, and the day you'll be together", asyn
     const first = await send(app.url, "/api/board");
     assert.equal(first.status, 200);
     assert.equal(first.json.board.people[0].name, "Teegan");
-    assert.equal(first.json.board.people[1].name, "You");
+    assert.equal(first.json.board.people[1].name, "Luca");
     assert.equal(first.json.mode, "local");
 
     const right = structuredClone(first.json.board.people[1]);
@@ -257,7 +257,7 @@ test("a stroke is saved, a bad stroke is rejected, and clear removes the drawing
       { id: "stroke01", color: "#14211c", width: 4, points: [[0, 0], [0.5, 0.25], [1, 1]] },
     ]);
     assert.equal(saved.json.board.people[0].name, "Teegan");
-    assert.equal(saved.json.board.people[1].name, "You");
+    assert.equal(saved.json.board.people[1].name, "Luca");
     assert.equal(saved.json.board.people[0].days[0].blocks[0].start, "08:50");
     assert.equal(saved.json.board.people[1].days[0].blocks[0].start, "07:50");
 
@@ -300,6 +300,8 @@ test("a stroke is saved, a bad stroke is rejected, and clear removes the drawing
 
     const page = await send(app.url, "/");
     assert.match(page.text, /Our calendars/);
+    assert.match(page.text, /Teegan on the left and Luca on the right\./);
+    assert.doesNotMatch(page.text, /Her week on the left, mine on the right\./);
     assert.match(page.text, /Plan a call|id="app"/);
     assert.doesNotMatch(page.text, /together/i);
     assert.doesNotMatch(page.text, /When we/);
