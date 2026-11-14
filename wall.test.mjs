@@ -313,9 +313,11 @@ test("a stroke is saved, a bad stroke is rejected, and clear removes the drawing
     const font = await send(app.url, "/fonts/atkinson-hyperlegible-400.woff2");
     assert.equal(font.status, 200);
     const client = await send(app.url, "/app.js");
-    assert.match(client.text, /Draw/);
     assert.match(client.text, /Plan a call/);
-    assert.match(client.text, /Clear drawing/);
+    assert.doesNotMatch(client.text, /Clear drawing/);
+    assert.doesNotMatch(client.text, /toggleDraw|pen-tray|wall-draw|paintStrokes|\/api\/strokes/);
+    assert.doesNotMatch(page.text, /wall-draw|Clear drawing|drawing you both/);
+    assert.doesNotMatch(css.text, /\.draw-layer|pen-tray|is-drawing/);
     assert.doesNotMatch(client.text, /together/i);
     assert.doesNotMatch(client.text, /When we/);
     assert.doesNotMatch(client.text, /innerHTML/);

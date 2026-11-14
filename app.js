@@ -1,10 +1,7 @@
-import { cleanCall, cleanPerson, cleanStroke, validateBoard } from "./board.mjs";
+import { cleanCall, cleanPerson, validateBoard } from "./board.mjs";
 import { freshSeed, PUBLIC_BOARD_URL } from "./seed.mjs";
 import {
   DAYS,
-  MAX_POINTS,
-  STROKE_COLORS,
-  STROKE_WIDTHS,
   ZONES,
   apartLabel,
   blockWhen,
@@ -16,13 +13,8 @@ import {
 } from "./view.mjs";
 
 const CODE_KEY = "side-by-side-code";
-const DRAW_POLL_MS = 3000;
-const COLOR_LABELS = ["Ink", "Green", "Clay", "Blue"];
-const WIDTH_LABELS = ["Thin", "Medium", "Thick"];
 const live = [];
-const inflight = new Set();
 let saveChain = Promise.resolve();
-let canvas = null;
 let transport = "pending";
 
 const state = {
@@ -34,12 +26,6 @@ const state = {
   draft: null,
   panel: null,
   focusId: "",
-  drawing: false,
-  penColor: STROKE_COLORS[0],
-  penWidth: STROKE_WIDTHS[1],
-  active: null,
-  pointerId: null,
-  clearing: false,
 };
 
 function el(tag, attrs = {}, ...kids) {
@@ -122,9 +108,6 @@ async function api(path, options = {}) {
     state.editing = null;
     state.draft = null;
     state.panel = null;
-    state.drawing = false;
-    state.active = null;
-    state.pointerId = null;
     render();
     const error = new Error("locked");
     error.locked = true;
@@ -162,9 +145,7 @@ function render() {
   const app = document.getElementById("app");
   app.replaceChildren();
   if (state.locked || !state.board) {
-    document.body.classList.remove("is-drawing");
     app.append(lockNote());
-    paintStrokes();
     return;
   }
   if (state.mode === "local") {
@@ -174,10 +155,8 @@ function render() {
   } else if (state.mode === "memory") {
     app.append(el("p", { class: "banner" }, "This tab has the starting week. A change here stays in this tab."));
   }
-  app.append(clocks(), actions(), wall(), el("p", { class: "footnote" }, "Each note keeps its own time zone. A pinned call stays up until you take it down. A drawing stays until someone clears it."));
-  document.body.classList.toggle("is-drawing", state.drawing);
+  app.append(clocks(), actions(), wall(), el("p", { class: "footnote" }, "Each note keeps its own time zone. A pinned call stays up until you take it down."));
   paintLive();
-  paintStrokes();
   if (state.focusId) {
     const target = document.querySelector('[data-block="' + state.focusId + '"] input[name="title"]');
     state.focusId = "";
@@ -197,113 +176,7 @@ function clocks() {
 
 function actions() {
   const off = state.mode === "preview";
-  const strokes = state.board.strokes || [];
-  return el(
-    "div",
-    { class: "actions" },
-    el("button", { type: "button", disabled: off, onClick: () => openPanel("call") }, "Plan a call"),
-    el(
-      "button",
-      {
-        type: "button",
-        class: state.drawing ? "is-on" : "",
-        dataset: { action: "draw" },
-        "aria-pressed": state.drawing ? "true" : "false",
-        disabled: off,
-        onClick: toggleDraw,
-      },
-      "Draw"
-    ),
-    el(
-      "button",
-      {
-        type: "button",
-        class: "text-btn",
-        dataset: { action: "clear-draw" },
-        disabled: off || state.clearing || !strokes.length,
-        onClick: clearDrawing,
-      },
-      "Clear drawing"
-    ),
-    penTray()
-  );
-}
-
-function penTray() {
-  const tray = el("div", {
-    class: "pen-tray",
-    dataset: { role: "pen-tray" },
-    hidden: state.drawing ? null : true,
-  });
-  STROKE_COLORS.forEach((color, index) => {
-    const on = color === state.penColor;
-    tray.append(
-      el("button", {
-        type: "button",
-        class: "swatch" + (on ? " is-on" : ""),
-        dataset: { color },
-        "aria-label": COLOR_LABELS[index] || "Color",
-        "aria-pressed": on ? "true" : "false",
-        onClick: () => chooseColor(color),
-      })
-    );
-  });
-  STROKE_WIDTHS.forEach((width, index) => {
-    const on = width === state.penWidth;
-    tray.append(
-      el(
-        "button",
-        {
-          type: "button",
-          class: "pen-width" + (on ? " is-on" : ""),
-          dataset: { width: String(width) },
-          "aria-pressed": on ? "true" : "false",
-          onClick: () => chooseWidth(width),
-        },
-        WIDTH_LABELS[index] || "Width"
-      )
-    );
-  });
-  tray.append(el("span", { class: "pen-hint" }, "Draw on the empty wall."));
-  return tray;
-}
-
-function toggleDraw() {
-  if (state.mode === "preview" || !state.board) return;
-  state.drawing = !state.drawing;
-  if (!state.drawing) {
-    state.active = null;
-    state.pointerId = null;
-    paintStrokes();
-  }
-  document.body.classList.toggle("is-drawing", state.drawing);
-  const button = document.querySelector("[data-action='draw']");
-  if (button) {
-    button.classList.toggle("is-on", state.drawing);
-    button.setAttribute("aria-pressed", state.drawing ? "true" : "false");
-  }
-  const tray = document.querySelector("[data-role='pen-tray']");
-  if (tray) tray.hidden = !state.drawing;
-}
-
-function chooseColor(color) {
-  if (!STROKE_COLORS.includes(color)) return;
-  state.penColor = color;
-  for (const button of document.querySelectorAll(".pen-tray .swatch")) {
-    const on = button.dataset.color === color;
-    button.classList.toggle("is-on", on);
-    button.setAttribute("aria-pressed", on ? "true" : "false");
-  }
-}
-
-function chooseWidth(width) {
-  if (!STROKE_WIDTHS.includes(width)) return;
-  state.penWidth = width;
-  for (const button of document.querySelectorAll(".pen-tray .pen-width")) {
-    const on = Number(button.dataset.width) === width;
-    button.classList.toggle("is-on", on);
-    button.setAttribute("aria-pressed", on ? "true" : "false");
-  }
+  return el("div", { class: "actions" }, el("button", { type: "button", disabled: off, onClick: () => openPanel("call") }, "Plan a call"));
 }
 
 function openPanel(panel) {
@@ -671,209 +544,6 @@ function enqueueSave(fn) {
   return run;
 }
 
-function mergeStrokes(remote) {
-  const list = Array.isArray(remote) ? remote : [];
-  if (!inflight.size || !state.board) return list;
-  const seen = new Set(list.map((stroke) => stroke.id));
-  const pending = (state.board.strokes || []).filter((stroke) => inflight.has(stroke.id) && !seen.has(stroke.id));
-  return list.concat(pending);
-}
-
-function syncClearButton() {
-  const button = document.querySelector("[data-action='clear-draw']");
-  if (!button) return;
-  const count = state.board && Array.isArray(state.board.strokes) ? state.board.strokes.length : 0;
-  button.disabled = state.mode === "preview" || state.clearing || count === 0;
-}
-
-function commitStroke(stroke) {
-  if (!stroke || !stroke.points.length || !state.board) return;
-  inflight.add(stroke.id);
-  state.board.strokes = (state.board.strokes || []).concat(stroke);
-  paintStrokes();
-  syncClearButton();
-  enqueueSave(async () => {
-    try {
-      const saved = await persistStroke(stroke);
-      inflight.delete(stroke.id);
-      if (state.clearing || !state.board) return;
-      const strokes = mergeStrokes(saved.board.strokes);
-      if (!state.editing && !state.panel) {
-        state.board = saved.board;
-        state.mode = saved.mode;
-      }
-      state.board.strokes = strokes;
-      paintStrokes();
-      syncClearButton();
-    } catch (err) {
-      inflight.delete(stroke.id);
-      if (state.board) {
-        state.board.strokes = (state.board.strokes || []).filter((item) => item.id !== stroke.id);
-        paintStrokes();
-        syncClearButton();
-      }
-      if (!err.locked) flash(err.message);
-    }
-  });
-}
-
-async function clearDrawing() {
-  if (state.mode === "preview" || state.clearing || !state.board) return;
-  state.clearing = true;
-  state.active = null;
-  state.pointerId = null;
-  syncClearButton();
-  paintStrokes();
-  try {
-    await saveChain;
-    const saved = await persistClear();
-    inflight.clear();
-    if (!state.board) return;
-    if (!state.editing && !state.panel) {
-      state.board = saved.board;
-      state.mode = saved.mode;
-    } else {
-      state.board.strokes = saved.board.strokes || [];
-    }
-    paintStrokes();
-    flash("Drawing cleared.");
-  } catch (err) {
-    if (!err.locked) flash(err.message);
-  } finally {
-    state.clearing = false;
-    syncClearButton();
-  }
-}
-
-function surfaceBox() {
-  if (!canvas) return { w: 1, h: 1, left: 0, top: 0 };
-  const rect = canvas.getBoundingClientRect();
-  return {
-    w: Math.max(1, rect.width),
-    h: Math.max(1, rect.height),
-    left: rect.left,
-    top: rect.top,
-  };
-}
-
-function pointFrom(event) {
-  const box = surfaceBox();
-  const x = Math.min(1, Math.max(0, (event.clientX - box.left) / box.w));
-  const y = Math.min(1, Math.max(0, (event.clientY - box.top) / box.h));
-  return [Math.round(x * 10000) / 10000, Math.round(y * 10000) / 10000];
-}
-
-function onPointerDown(event) {
-  if (!state.drawing || state.clearing || !state.board || state.mode === "preview" || state.active) return;
-  if (event.button != null && event.button !== 0) return;
-  event.preventDefault();
-  state.pointerId = event.pointerId;
-  try {
-    canvas.setPointerCapture(event.pointerId);
-  } catch {
-    // The pointer can disappear before capture.
-  }
-  state.active = {
-    id: newId(),
-    color: state.penColor,
-    width: state.penWidth,
-    points: [pointFrom(event)],
-  };
-  paintStrokes();
-}
-
-function onPointerMove(event) {
-  const stroke = state.active;
-  if (!stroke || event.pointerId !== state.pointerId) return;
-  event.preventDefault();
-  if (stroke.points.length >= MAX_POINTS) return;
-  const next = pointFrom(event);
-  const last = stroke.points[stroke.points.length - 1];
-  const box = surfaceBox();
-  const dx = (next[0] - last[0]) * box.w;
-  const dy = (next[1] - last[1]) * box.h;
-  if (dx * dx + dy * dy < 4) return;
-  stroke.points.push(next);
-  paintStrokes();
-}
-
-function onPointerUp(event) {
-  if (!state.active || (event && state.pointerId != null && event.pointerId !== state.pointerId)) return;
-  const stroke = state.active;
-  state.active = null;
-  state.pointerId = null;
-  if (canvas && event && canvas.hasPointerCapture(event.pointerId)) {
-    try {
-      canvas.releasePointerCapture(event.pointerId);
-    } catch {
-      // Already released.
-    }
-  }
-  commitStroke(stroke);
-}
-
-function drawStroke(ctx, stroke, w, h) {
-  if (!stroke || !STROKE_COLORS.includes(stroke.color) || !STROKE_WIDTHS.includes(stroke.width)) return;
-  if (!Array.isArray(stroke.points) || !stroke.points.length) return;
-  const first = stroke.points[0];
-  if (!Array.isArray(first) || first.length < 2) return;
-  ctx.beginPath();
-  ctx.strokeStyle = stroke.color;
-  ctx.fillStyle = stroke.color;
-  ctx.lineWidth = stroke.width;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  if (stroke.points.length === 1) {
-    ctx.arc(first[0] * w, first[1] * h, stroke.width / 2, 0, Math.PI * 2);
-    ctx.fill();
-    return;
-  }
-  ctx.moveTo(first[0] * w, first[1] * h);
-  for (let i = 1; i < stroke.points.length; i += 1) {
-    const point = stroke.points[i];
-    if (!Array.isArray(point) || point.length < 2) continue;
-    ctx.lineTo(point[0] * w, point[1] * h);
-  }
-  ctx.stroke();
-}
-
-function paintStrokes() {
-  if (!canvas) return;
-  const box = surfaceBox();
-  const dpr = canvas.width / box.w;
-  const ctx = canvas.getContext("2d");
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, box.w, box.h);
-  if (!state.board) return;
-  const strokes = [...(state.board.strokes || [])];
-  if (state.active) strokes.push(state.active);
-  for (const stroke of strokes) drawStroke(ctx, stroke, box.w, box.h);
-}
-
-function resizeCanvas() {
-  if (!canvas) return;
-  const box = surfaceBox();
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const nextW = Math.round(box.w * dpr);
-  const nextH = Math.round(box.h * dpr);
-  if (canvas.width !== nextW || canvas.height !== nextH) {
-    canvas.width = nextW;
-    canvas.height = nextH;
-  }
-  paintStrokes();
-}
-
-function bindCanvas() {
-  canvas = document.getElementById("wall-draw");
-  if (!canvas) return;
-  resizeCanvas();
-  window.addEventListener("resize", resizeCanvas);
-  canvas.addEventListener("pointerdown", onPointerDown, { passive: false });
-  canvas.addEventListener("pointermove", onPointerMove, { passive: false });
-  canvas.addEventListener("pointerup", onPointerUp);
-  canvas.addEventListener("pointercancel", onPointerUp);
-}
-
 function paintLive() {
   const now = new Date();
   for (const item of live) item.node.textContent = item.fn(now);
@@ -907,9 +577,6 @@ function adopt(board, mode) {
   state.editing = null;
   state.draft = null;
   state.panel = null;
-  state.drawing = false;
-  state.active = null;
-  state.pointerId = null;
   if (!Array.isArray(state.board.strokes)) state.board.strokes = [];
   if (!Array.isArray(state.board.calls)) state.board.calls = [];
   render();
@@ -937,9 +604,15 @@ async function attempt(fn) {
   throw last;
 }
 
+function documentReadUrl() {
+  // This host caches a bare GET for an hour. A new query reads the latest board.
+  const join = PUBLIC_BOARD_URL.includes("?") ? "&" : "?";
+  return PUBLIC_BOARD_URL + join + "t=" + Date.now();
+}
+
 async function readDocument() {
   return attempt(async () => {
-    const res = await fetch(PUBLIC_BOARD_URL, {
+    const res = await fetch(documentReadUrl(), {
       method: "GET",
       cache: "no-store",
       signal: AbortSignal.timeout(6000),
@@ -966,7 +639,7 @@ async function writeDocument(board) {
   };
   await attempt(async () => {
     const res = await fetch(PUBLIC_BOARD_URL, {
-      method: "PUT",
+      method: "POST",
       cache: "no-store",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
@@ -986,16 +659,12 @@ async function readWall() {
 async function changeShared(mutator) {
   if (transport === "memory") {
     const next = validateBoard(mutator(structuredClone(state.board)));
-    next.strokes = mergeStrokes(next.strokes);
     return { mode: "memory", board: next };
   }
   if (transport !== "document") throw plainError("Could not save.");
   const remote = await readDocument();
-  remote.strokes = mergeStrokes(remote.strokes);
   const next = validateBoard(mutator(structuredClone(remote)));
-  next.strokes = mergeStrokes(next.strokes);
   await writeDocument(next);
-  next.strokes = mergeStrokes(next.strokes);
   return { mode: "shared", board: next };
 }
 
@@ -1034,36 +703,6 @@ async function persistRemoveCall(id) {
   );
 }
 
-async function persistStroke(stroke) {
-  if (transport === "server") return api("/api/strokes", { method: "POST", body: stroke });
-  if (transport !== "document" && transport !== "memory") throw plainError("Could not save.");
-  cleanStroke(stroke);
-  if (transport === "memory") return { mode: "memory", board: validateBoard(structuredClone(state.board)) };
-  const remote = await readDocument();
-  remote.strokes = mergeStrokes(remote.strokes);
-  const next = validateBoard(remote);
-  await writeDocument(next);
-  next.strokes = mergeStrokes(next.strokes);
-  return { mode: "shared", board: next };
-}
-
-async function persistClear() {
-  if (transport === "server") return api("/api/strokes", { method: "DELETE" });
-  return enqueueSave(async () => {
-    if (transport === "memory") {
-      const next = structuredClone(state.board);
-      next.strokes = [];
-      return { mode: "memory", board: validateBoard(next) };
-    }
-    if (transport !== "document") throw plainError("Could not save.");
-    const remote = await readDocument();
-    remote.strokes = [];
-    const next = validateBoard(remote);
-    await writeDocument(next);
-    return { mode: "shared", board: next };
-  });
-}
-
 async function load() {
   try {
     const data = await api("/api/board");
@@ -1085,8 +724,6 @@ async function load() {
   }
 }
 
-bindCanvas();
-
 load().catch((err) => {
   if (err && err.locked) return;
   const app = document.getElementById("app");
@@ -1097,28 +734,12 @@ setInterval(() => {
   if (!state.editing && !state.panel) paintLive();
 }, 30000);
 
-setInterval(async () => {
-  if (transport === "pending" || transport === "memory") return;
-  if (state.locked || !state.board || state.clearing || state.active || document.hidden) return;
-  try {
-    const data = await readWall();
-    const merged = mergeStrokes(data.board.strokes);
-    if (JSON.stringify(merged) !== JSON.stringify(state.board.strokes || [])) {
-      state.board.strokes = merged;
-      paintStrokes();
-      syncClearButton();
-    }
-  } catch {
-    // Keep the drawing that’s already on screen.
-  }
-}, DRAW_POLL_MS);
 
 setInterval(async () => {
   if (transport === "pending" || transport === "memory") return;
-  if (state.locked || state.editing || state.panel || state.active || state.clearing || !state.board) return;
+  if (state.locked || state.editing || state.panel || !state.board) return;
   try {
     const data = await readWall();
-    data.board.strokes = mergeStrokes(data.board.strokes);
     if (JSON.stringify(data.board) !== JSON.stringify(state.board)) {
       state.board = data.board;
       state.mode = data.mode;
