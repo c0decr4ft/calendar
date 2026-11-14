@@ -235,6 +235,37 @@ test("preview mode shows the starting week and refuses edits", async () => {
   }
 });
 
+test("a narrow phone offers one screen at a time and the wide layout still has both calendars", async () => {
+  const app = await listen({ getMode: () => "local", store: memoryStore() });
+  try {
+    const page = await send(app.url, "/");
+    const client = await send(app.url, "/app.js");
+    const css = await send(app.url, "/styles.css");
+    assert.equal(page.status, 200);
+    assert.match(page.text, /Our calendars/);
+    assert.match(page.text, /Teegan on the left and Luca on the right\./);
+    assert.doesNotMatch(page.text, /class="wall"/);
+    assert.doesNotMatch(page.text, /class="phone-home"/);
+    assert.match(client.text, /\(max-width: 700px\)/);
+    assert.match(client.text, /phone-home/);
+    assert.match(client.text, /phone-choice/);
+    assert.match(client.text, /class: "phone-back"/);
+    assert.match(client.text, /"Back"/);
+    assert.match(client.text, /actions\(\), wall\(\)/);
+    assert.match(client.text, /left\.name/);
+    assert.match(client.text, /right\.name/);
+    assert.match(client.text, /"Plan a call"/);
+    assert.doesNotMatch(client.text, /"Her"/);
+    assert.doesNotMatch(client.text, /"You"/);
+    assert.match(css.text, /button\.phone-choice/);
+    assert.match(css.text, /min-height:\s*4\.25rem/);
+    assert.doesNotMatch(client.text, /Clear drawing/);
+    assert.doesNotMatch(client.text, /toggleDraw|pen-tray|wall-draw|paintStrokes/);
+  } finally {
+    await app.close();
+  }
+});
+
 test("a stroke is saved, a bad stroke is rejected, and clear removes the drawing", async () => {
   const store = memoryStore();
   const app = await listen({ getMode: () => "local", store });
