@@ -1,3 +1,5 @@
+import { cleanCall, cleanPerson, cleanStroke, validateBoard } from "./board.mjs";
+import { freshSeed, PUBLIC_BOARD_URL } from "./seed.mjs";
 import {
   DAYS,
   MAX_POINTS,
@@ -21,6 +23,7 @@ const live = [];
 const inflight = new Set();
 let saveChain = Promise.resolve();
 let canvas = null;
+let transport = "pending";
 
 const state = {
   mode: "local",
@@ -168,6 +171,8 @@ function render() {
     app.append(el("p", { class: "banner" }, "Saved on this computer only. The other phone won’t see a change until this wall is shared."));
   } else if (state.mode === "preview") {
     app.append(el("p", { class: "banner" }, "This is the starting week. Shared saving isn’t on yet, so the notes can’t be changed from here."));
+  } else if (state.mode === "memory") {
+    app.append(el("p", { class: "banner" }, "This tab has the starting week. A change here stays in this tab."));
   }
   app.append(clocks(), actions(), wall(), el("p", { class: "footnote" }, "Each note keeps its own time zone. A pinned call stays up until you take it down. A drawing stays until someone clears it."));
   document.body.classList.toggle("is-drawing", state.drawing);
@@ -422,7 +427,7 @@ function editor(person) {
       day.blocks = day.blocks.filter((block) => block.title.trim() || block.start || block.end || block.note.trim());
     }
     try {
-      const saved = await api("/api/people/" + person.id, { method: "PUT", body });
+      const saved = await persistPerson(body);
       state.board = saved.board;
       state.editing = null;
       state.draft = null;
@@ -562,10 +567,7 @@ function callForm() {
       return;
     }
     try {
-      const saved = await api("/api/calls", {
-        method: "POST",
-        body: { date: data.date, time: data.time, zone: data.zone, note: data.note || "" },
-      });
+      const saved = await persistCall({ date: data.date, time: data.time, zone: data.zone, note: data.note || "" });
       state.board = saved.board;
       state.panel = null;
       render();
@@ -615,7 +617,7 @@ function callNote(call) {
 
 async function removeCall(id) {
   try {
-    const saved = await api("/api/calls/" + id, { method: "DELETE" });
+    const saved = await persistRemoveCall(id);
     state.board = saved.board;
     render();
     flash("Taken down.");
@@ -692,7 +694,7 @@ function commitStroke(stroke) {
   syncClearButton();
   enqueueSave(async () => {
     try {
-      const saved = await api("/api/strokes", { method: "POST", body: stroke });
+      const saved = await persistStroke(stroke);
       inflight.delete(stroke.id);
       if (state.clearing || !state.board) return;
       const strokes = mergeStrokes(saved.board.strokes);
@@ -724,7 +726,7 @@ async function clearDrawing() {
   paintStrokes();
   try {
     await saveChain;
-    const saved = await api("/api/strokes", { method: "DELETE" });
+    const saved = await persistClear();
     inflight.clear();
     if (!state.board) return;
     if (!state.editing && !state.panel) {
@@ -892,18 +894,195 @@ function paintLive() {
   }
 }
 
-async function load() {
-  const data = await api("/api/board");
-  state.board = data.board;
-  state.mode = data.mode;
+function plainError(message) {
+  const error = new Error(message);
+  error.locked = false;
+  return error;
+}
+
+function adopt(board, mode) {
+  state.board = board;
+  state.mode = mode;
   state.locked = false;
   state.editing = null;
   state.draft = null;
   state.panel = null;
   state.drawing = false;
   state.active = null;
+  state.pointerId = null;
   if (!Array.isArray(state.board.strokes)) state.board.strokes = [];
+  if (!Array.isArray(state.board.calls)) state.board.calls = [];
   render();
+}
+
+function httpFailure(status) {
+  const error = plainError("Could not save.");
+  error.status = status;
+  return error;
+}
+
+async function attempt(fn) {
+  let last = null;
+  for (let i = 0; i < 3; i += 1) {
+    try {
+      return await fn();
+    } catch (err) {
+      last = err;
+      const status = err && err.status;
+      if (err && err.locked) throw err;
+      if (status && status < 500) throw err;
+      if (i < 2) await new Promise((resolve) => setTimeout(resolve, 300 * (i + 1)));
+    }
+  }
+  throw last;
+}
+
+async function readDocument() {
+  return attempt(async () => {
+    const res = await fetch(PUBLIC_BOARD_URL, {
+      method: "GET",
+      cache: "no-store",
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!res.ok) throw httpFailure(res.status);
+    const data = await res.json();
+    if (!data || typeof data !== "object" || Array.isArray(data)) throw plainError("Could not save.");
+    return validateBoard({
+      people: data.people,
+      calls: data.calls,
+      visit: data.visit || { date: "", place: "" },
+      strokes: data.strokes,
+    });
+  });
+}
+
+async function writeDocument(board) {
+  if (transport === "server") throw plainError("Could not save.");
+  const payload = {
+    people: board.people,
+    calls: board.calls,
+    visit: board.visit || { date: "", place: "" },
+    strokes: board.strokes || [],
+  };
+  await attempt(async () => {
+    const res = await fetch(PUBLIC_BOARD_URL, {
+      method: "PUT",
+      cache: "no-store",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!res.ok) throw httpFailure(res.status);
+  });
+  return payload;
+}
+
+async function readWall() {
+  if (transport === "server") return api("/api/board");
+  if (transport === "document") return { mode: "shared", board: await readDocument() };
+  throw plainError("Could not save.");
+}
+
+async function changeShared(mutator) {
+  if (transport === "memory") {
+    const next = validateBoard(mutator(structuredClone(state.board)));
+    next.strokes = mergeStrokes(next.strokes);
+    return { mode: "memory", board: next };
+  }
+  if (transport !== "document") throw plainError("Could not save.");
+  const remote = await readDocument();
+  remote.strokes = mergeStrokes(remote.strokes);
+  const next = validateBoard(mutator(structuredClone(remote)));
+  next.strokes = mergeStrokes(next.strokes);
+  await writeDocument(next);
+  next.strokes = mergeStrokes(next.strokes);
+  return { mode: "shared", board: next };
+}
+
+async function persistPerson(person) {
+  if (transport === "server") return api("/api/people/" + person.id, { method: "PUT", body: person });
+  const cleaned = cleanPerson(person, person.id);
+  return enqueueSave(() =>
+    changeShared((board) => {
+      board.people = board.people.map((item) => (item.id === cleaned.id ? cleaned : item));
+      return board;
+    })
+  );
+}
+
+async function persistCall(input) {
+  if (transport === "server") return api("/api/calls", { method: "POST", body: input });
+  const call = cleanCall({ ...input, id: newId() });
+  return enqueueSave(() =>
+    changeShared((board) => {
+      if (board.calls.length >= 20) throw plainError("Take down an old call first.");
+      board.calls.push(call);
+      return board;
+    })
+  );
+}
+
+async function persistRemoveCall(id) {
+  if (transport === "server") return api("/api/calls/" + id, { method: "DELETE" });
+  return enqueueSave(() =>
+    changeShared((board) => {
+      const next = board.calls.filter((call) => call.id !== id);
+      if (next.length === board.calls.length) throw plainError("That call is already down.");
+      board.calls = next;
+      return board;
+    })
+  );
+}
+
+async function persistStroke(stroke) {
+  if (transport === "server") return api("/api/strokes", { method: "POST", body: stroke });
+  if (transport !== "document" && transport !== "memory") throw plainError("Could not save.");
+  cleanStroke(stroke);
+  if (transport === "memory") return { mode: "memory", board: validateBoard(structuredClone(state.board)) };
+  const remote = await readDocument();
+  remote.strokes = mergeStrokes(remote.strokes);
+  const next = validateBoard(remote);
+  await writeDocument(next);
+  next.strokes = mergeStrokes(next.strokes);
+  return { mode: "shared", board: next };
+}
+
+async function persistClear() {
+  if (transport === "server") return api("/api/strokes", { method: "DELETE" });
+  return enqueueSave(async () => {
+    if (transport === "memory") {
+      const next = structuredClone(state.board);
+      next.strokes = [];
+      return { mode: "memory", board: validateBoard(next) };
+    }
+    if (transport !== "document") throw plainError("Could not save.");
+    const remote = await readDocument();
+    remote.strokes = [];
+    const next = validateBoard(remote);
+    await writeDocument(next);
+    return { mode: "shared", board: next };
+  });
+}
+
+async function load() {
+  try {
+    const data = await api("/api/board");
+    if (!data || !data.board || !Array.isArray(data.board.people)) throw plainError("Could not save.");
+    transport = "server";
+    adopt(data.board, data.mode);
+    return;
+  } catch (err) {
+    if (err && err.locked) throw err;
+  }
+  try {
+    const board = await readDocument();
+    transport = "document";
+    adopt(board, "shared");
+    return;
+  } catch {
+    transport = "memory";
+    adopt(freshSeed(), "memory");
+  }
 }
 
 bindCanvas();
@@ -919,9 +1098,10 @@ setInterval(() => {
 }, 30000);
 
 setInterval(async () => {
+  if (transport === "pending" || transport === "memory") return;
   if (state.locked || !state.board || state.clearing || state.active || document.hidden) return;
   try {
-    const data = await api("/api/board");
+    const data = await readWall();
     const merged = mergeStrokes(data.board.strokes);
     if (JSON.stringify(merged) !== JSON.stringify(state.board.strokes || [])) {
       state.board.strokes = merged;
@@ -934,9 +1114,10 @@ setInterval(async () => {
 }, DRAW_POLL_MS);
 
 setInterval(async () => {
+  if (transport === "pending" || transport === "memory") return;
   if (state.locked || state.editing || state.panel || state.active || state.clearing || !state.board) return;
   try {
-    const data = await api("/api/board");
+    const data = await readWall();
     data.board.strokes = mergeStrokes(data.board.strokes);
     if (JSON.stringify(data.board) !== JSON.stringify(state.board)) {
       state.board = data.board;

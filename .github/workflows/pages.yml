@@ -30,7 +30,7 @@ jobs:
       - name: Collect static files
         run: |
           mkdir -p _site/fonts
-          cp index.html styles.css app.js view.mjs favicon.svg _site/
+          cp index.html styles.css app.js view.mjs seed.mjs board.mjs favicon.svg _site/
           cp fonts/atkinson-hyperlegible-400.woff2 fonts/atkinson-hyperlegible-700.woff2 fonts/OFL.txt _site/fonts/
 
       - name: Upload Pages artifact

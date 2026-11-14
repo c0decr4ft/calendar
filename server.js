@@ -22,6 +22,8 @@ const STATIC = {
   "/index.html": ["index.html", "text/html; charset=utf-8"],
   "/app.js": ["app.js", "text/javascript; charset=utf-8"],
   "/view.mjs": ["view.mjs", "text/javascript; charset=utf-8"],
+  "/seed.mjs": ["seed.mjs", "text/javascript; charset=utf-8"],
+  "/board.mjs": ["board.mjs", "text/javascript; charset=utf-8"],
   "/styles.css": ["styles.css", "text/css; charset=utf-8"],
   "/favicon.svg": ["favicon.svg", "image/svg+xml"],
   "/fonts/atkinson-hyperlegible-400.woff2": ["fonts/atkinson-hyperlegible-400.woff2", "font/woff2"],
